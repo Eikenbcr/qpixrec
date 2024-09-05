@@ -7,7 +7,7 @@
 # * Author: Carter Eikenbary
 # * Creation date: 12 January 2024
 #
-# Usage: python /path/to/t0_hitmaker.py /path/to/t0_hitmaker/output/ total_events binWidth verbosity
+# Usage: python /path/to/t0_hitmaker.py /path/to/t0_hitmaker/output/ binWidth verbosity
 # Notes: HPRC users must load foss/2020b and source qpix-setup before running this script
 # -----------------------------------------------------------------------------
 
@@ -37,12 +37,13 @@ expected_const = np.sqrt(2*diff_L/elec_vel**2)
 
 dfoutput_dir = sys.argv[1]
 t0_hitmaker_dir = sys.argv[2]
-total_events = int(sys.argv[3])
 binWidth = float(sys.argv[4])
 
 #Read in the nReset cut qpixrtd data
 main_df = pd.read_pickle(dfoutput_dir + "main_subdf.pkl").reset_index(drop = True)
 main_df = main_df.drop(columns=['reset_time', 'TSLR'])
+
+total_events = int(max(main_df.event) + 1)
 
 #Read in the qpixg4 data (used for comparison only)
 g4_df = pd.read_pickle(dfoutput_dir + "g4_df.pkl")
