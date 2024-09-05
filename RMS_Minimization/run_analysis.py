@@ -27,12 +27,6 @@ else:
 dfoutput_dir = file_path + "rtd_dataframes/"
 t0_hitmaker_dir = file_path + "t0_hitmaker/"
 
-#total events in root file (standard = 1000)
-total_events = "1000"
-
-#number of minimum resets for 'good' event (standard = ?)
-num_resets = "5"
-
 # Define bin width to be used for distribution plots and Gaussian fits
 binWidth = "8e-05"
 
@@ -67,8 +61,8 @@ def execute_script(script_name, *args):
 if __name__ == "__main__":
     # List of analysis scripts along with there system arguments
     scripts_to_run = [
-        (run_path +"/root_to_pandas.py", root_file, dfoutput_dir, total_events, num_resets),
-        (run_path +"/t0_hitmaker.py", dfoutput_dir, t0_hitmaker_dir, total_events, binWidth, verbosity)
+        (run_path +"/root_to_pandas.py", root_file, dfoutput_dir),
+        (run_path +"/t0_hitmaker.py", dfoutput_dir, t0_hitmaker_dir, binWidth, verbosity)
     ]
 
     for script_info in scripts_to_run:
