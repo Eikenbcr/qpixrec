@@ -32,7 +32,7 @@ t0_hitmaker_dir = sys.argv[2]
 reset_threshold = int(sys.argv[3])
 reset_min = int(sys.argv[4])
 reset_max = int(sys.argv[5])
-clockspeed = sys.argv[6]
+clockspeed = float(sys.argv[6])
 
 # Constants
 diff_L = 6.8223 #cm**2/s
