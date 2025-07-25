@@ -5,7 +5,7 @@
 #
 # Runs the qpixrec lightless reconstruction scripts in sequential order
 # * Author: Carter Eikenbary
-# * Creation date: 2 December 2024
+# * Creation date: 24 July 2025
 #
 # Usage: python /path/to/run_analysis.py /path/to/root/file.root -threshold # -rmin # -rmax #
 # Notes: HPRC users must load foss/2022b and source qpix-setup before running this script
@@ -30,6 +30,7 @@ def main():
     parser.add_argument("-threshold", type=int, default=6250, help="Electron threshold for QPix reset (default: 6250).")
     parser.add_argument("-rmin", type=int, default=3, help="Minimum resets for t0 evaluation (default: 3).")
     parser.add_argument("-rmax", type=int, default=5, help="Maximum resets for t0 evaluation (default: 5).")
+    parser.add_argument("-clockspeed", type=str, default="100", help="Clock speed in MHz (default: 100).")
     
     # Parse arguments
     args = parser.parse_args()
@@ -39,14 +40,16 @@ def main():
     reset_threshold = args.threshold
     rmin = args.rmin
     rmax = args.rmax
-
+    clockspeed = args.clockspeed
+    
     # Define output directories
     file_path = os.path.dirname(root_file) + "/"
     dfoutput_dir = file_path + "rtd_dataframe/"
     t0_hitmaker_dir = file_path + "t0_hitmaker/"
+    deltaZ_dir = file_path + "deltaZ/"
     
     # Create directories if they don't exist
-    output_dirs = [dfoutput_dir, t0_hitmaker_dir]
+    output_dirs = [dfoutput_dir, t0_hitmaker_dir, deltaZ_dir]
     for output_dir in output_dirs:
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
@@ -56,7 +59,8 @@ def main():
     # List of scripts to run
     scripts_to_run = [
         (run_path + "/root_to_pandas.py", root_file, dfoutput_dir),
-        (run_path + "/t0_hitmaker.py", dfoutput_dir, t0_hitmaker_dir, str(reset_threshold), str(rmin), str(rmax))
+        (run_path + "/t0_hitmaker.py", dfoutput_dir, t0_hitmaker_dir, str(reset_threshold), str(rmin), str(rmax), str(clockspeed)),
+        (run_path + "/Calculate_DeltaZ.py", dfoutput_dir, t0_hitmaker_dir, deltaZ_dir),
     ]
 
     # Execute each script

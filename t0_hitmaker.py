@@ -17,13 +17,13 @@ import matplotlib.pyplot as plt
 
 import numpy as np
 import pandas as pd
-from scipy import stats
+from scipy import stats, optimize
 
 from scipy.optimize import curve_fit
 from scipy.optimize import minimize
 
 import sys
-
+from tqdm import tqdm
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -32,7 +32,9 @@ t0_hitmaker_dir = sys.argv[2]
 reset_threshold = int(sys.argv[3])
 reset_min = int(sys.argv[4])
 reset_max = int(sys.argv[5])
+clockspeed = sys.argv[6]
 
+# Constants
 diff_L = 6.8223 #cm**2/s
 elec_vel = 164800 #cm**2/s
 expected_const = np.sqrt(2*diff_L/elec_vel**2)
@@ -45,8 +47,64 @@ def std_exp(mean):
 def std_difference(mean, std):
     return (std - std_exp(mean))
 
+def t0_solve(mean, std):
+    return (mean - (std/expected_const)**2)
+
 def single_cdf(x, a, b, c):
     return a * stats.norm.cdf(x, loc=b, scale=c)
+
+def inverse_singlecdf_solver(y_targets, a, b, c, x_min=-1, x_max=1):
+    def root_solver(y):
+        def func(x):
+            return single_cdf(x, a, b, c) - y
+        try:
+            return optimize.brentq(func, x_min, x_max)
+        except ValueError:
+            return np.nan
+
+    y_targets = np.atleast_1d(y_targets)
+    results = np.array([root_solver(y) for y in y_targets])
+    return results if len(results) > 1 else results[0]
+
+def double_cdf(x, a, b, c, d, e, f):
+    return (
+        a * stats.norm.cdf(x, loc=b, scale=c) + 
+        d * stats.norm.cdf(x, loc=e, scale=f)
+    )
+
+def inverse_doublecdf_solver(y_targets, a, b, c, d, e, f, x_min=-1, x_max=1):
+    def root_solver(y):
+        def func(x):
+            return double_cdf(x, a, b, c, d, e, f) - y
+        try:
+            return optimize.brentq(func, x_min, x_max)
+        except ValueError:
+            return np.nan  # If no root is found in the range
+
+    return np.array([root_solver(y) for y in y_targets])
+
+def triple_cdf(x, a, b, c, d, e, f, g, h, i):
+    return (
+        a * stats.norm.cdf(x, loc=b, scale=c) +
+        d * stats.norm.cdf(x, loc=e, scale=f) +
+        g * stats.norm.cdf(x, loc=h, scale=i)
+    )
+
+def inverse_triplecdf_solver(y_targets, a, b, c, d, e, f, g, h, i, x_min=-1, x_max=1):
+    def root_solver(y):
+        def func(x):
+            return triple_cdf(x, a, b, c, d, e, f, g, h, i) - y
+        try:
+            return optimize.brentq(func, x_min, x_max)
+        except ValueError:
+            return np.nan
+
+    y_targets = np.atleast_1d(y_targets)
+    results = np.array([root_solver(y) for y in y_targets])
+    return results if len(results) > 1 else results[0]
+
+def single_gaussian(x, amplitude, mean, sigma):
+    return amplitude * np.exp(-0.5 * ((x - mean) / sigma)**2)
 
 def single_cdf_nostd(x, a, b):
     return a * stats.norm.cdf(x, loc=b, scale=std_exp(b))
@@ -57,235 +115,347 @@ def double_cdf_nostd(x, a, b, c, d):
 def triple_cdf_nostd(x, a, b, c, d, e, f):
     return a * stats.norm.cdf(x, loc=b, scale=std_exp(b)) + c * stats.norm.cdf(x, loc=d, scale=std_exp(d)) + e * stats.norm.cdf(x, loc=f, scale=std_exp(f))
 
-def single_gaussian(x, amplitude, mean, sigma):
-    return amplitude * np.exp(-0.5 * ((x - mean) / sigma)**2)
-
-def process_singlecdf(df):
+def process_singlecdf(df, plot=False):
     singlecdf_event = []
     singlecdf_pixid = []
     singlecdf_amp = []
     singlecdf_mean = []
     singlecdf_std = []
     singlecdf_diff = []
+    singlecdf_t0 = []
+    singlecdf_rmse = []
+    
+    iterator = tqdm(range(len(df)), desc="Fitting CDFs")
 
-    for i in range(len(df)):
-        reset_times = np.array(df['reset_time'].reset_index().iloc[i][1])
+    for i in iterator:
+        row = df.iloc[i]
+        reset_times = np.asarray(row.reset_time)
         num_resets = len(reset_times)
-        reset_count = np.arange(1, num_resets + 1)  
-        
-        initial_params = [num_resets + 0.1, np.mean(reset_times), np.std(reset_times)]
-        
+        event = row.event
+        pixelid = row.PixelID
+        reset_count = np.arange(1, num_resets + 1)
+        initial_params = [num_resets + 0.1, np.median(reset_times), np.std(reset_times)]
+        bounds = [(num_resets, 0, 0), (np.inf, np.inf, np.inf)]
         try:
-            cdf_params, cdf_covariance = curve_fit(single_cdf, reset_times, reset_count, p0=initial_params)
-            reset_amp = cdf_params[0]
-            reset_mean = cdf_params[1]
-            reset_std = cdf_params[2]
-            reset_diff = std_difference(reset_mean, reset_std)    
-            fitted_values = single_cdf(reset_times, *cdf_params)
-            residuals = reset_count - fitted_values
-            sum_residuals = np.sum(np.abs(residuals))
-            sum_residuals_per_reset = sum_residuals/num_resets                
+            cdf_params, _ = curve_fit(single_cdf, reset_times, reset_count, p0=initial_params, bounds=bounds)
+
+            amp, mean, std = cdf_params
+            diff = std_difference(mean, std)
+            t0_val = t0_solve(mean, std)
             
-            if ((reset_amp > num_resets) and (reset_amp < num_resets + 1) and (sum_residuals_per_reset < 0.03)):
-                singlecdf_event.append(n)
-                singlecdf_pixid.append(df.iloc[i].PixelID)
-                singlecdf_amp.append(reset_amp)
-                singlecdf_mean.append(reset_mean)
-                singlecdf_std.append(reset_std)
-                singlecdf_diff.append(reset_diff)
+            expected_reset_times = inverse_singlecdf_solver(reset_count, amp, mean, std)
+            
+            rmse = np.sqrt(np.mean((reset_times - expected_reset_times) ** 2))
+            if rmse < 0.1*clockspeed:
+                singlecdf_event.append(row.event)
+                singlecdf_pixid.append(row.PixelID)
+                singlecdf_amp.append(amp)
+                singlecdf_mean.append(mean)
+                singlecdf_std.append(std)
+                singlecdf_diff.append(diff)
+                singlecdf_t0.append(t0_val)
+                singlecdf_rmse.append(rmse)
+            
+            if plot:
+                # Plotting the reset data and the CDF fit
+                plt.figure(figsize=(10, 8))
+    
+                # Plot the reset data
+                plt.scatter(reset_times, reset_count, label='Reset Data', color='blue', alpha=0.5)
+
+                # Create a smooth curve for the CDF fit
+                x_fit = np.linspace(min(reset_times), max(reset_times), 100)
+                y_fit = single_cdf(x_fit, *cdf_params)
+
+                # Plot the CDF fit
+                plt.plot(x_fit, y_fit, label=('CDF Fit:' '\n' + r'$\mu = {:.4e} sec$' '\n' + r'$\sigma = {:.4e} sec$').format(mean, std), color='red')
+                plt.ticklabel_format(axis='x', style='sci', scilimits=(0, 0))
+                plt.xticks(np.linspace(min(x_fit), max(x_fit), 5))
+                plt.xlabel('Reset Time [sec]', fontsize=16)
+                plt.ylabel('Cumulative Resets', fontsize=16)
+                plt.title(f'Single-CDF Fit for Pixel {pixelid}, Event {event}', fontsize=16)
+                plt.legend(fontsize=14)
+                plt.xticks(fontsize=14)
+                plt.yticks(fontsize=14)
+                plt.grid()
+                plt.show()               
             
         except RuntimeError:
             continue
-            
+
     data = {
-    'event': singlecdf_event,
-    'PixelID': singlecdf_pixid,
-    'Amp': singlecdf_amp,
-    'Mean': singlecdf_mean,
-    'StD': singlecdf_std,
-    'Diff': singlecdf_diff,
+        'event': singlecdf_event,
+        'PixelID': singlecdf_pixid,
+        'Amp': singlecdf_amp,
+        'Mean': singlecdf_mean,
+        'StD': singlecdf_std,
+        'Diff': singlecdf_diff,
+        't0': singlecdf_t0,
+        'rmse': singlecdf_rmse,
     }
 
     return pd.DataFrame(data)
 
-def process_singlehit(df, t0):
+def process_singlehit(df, t0, plot=False):
     singlecdf_event = []
     singlecdf_pixid = []
     singlecdf_amp = []
     singlecdf_mean = []
     singlecdf_std = []
-    singlecdf_residual = []
+    singlecdf_rmse = []
+    
+    iterator = tqdm(range(len(df)), desc="Fitting CDFs")
 
-    for i in range(len(df)):
-        reset_times = np.array(df['reset_time'].reset_index().iloc[i][1]) - t0
+    for i in iterator:
+        row = df.iloc[i]
+        reset_times = np.asarray(row.reset_time) - t0
         num_resets = len(reset_times)
-        reset_count = np.arange(1, num_resets + 1)  
-        
-        initial_params = [num_resets + 0.1, np.mean(reset_times)]
-        
+        event = row.event
+        pixelid = row.PixelID
+        reset_count = np.arange(1, num_resets + 1)
+        initial_params = [num_resets + 0.1, np.median(reset_times)]
+        bounds = [(num_resets, 0), (np.inf, np.inf)]
         try:
-            cdf_params, cdf_covariance = curve_fit(single_cdf_nostd, reset_times, reset_count, p0=initial_params)
-            reset_amp = cdf_params[0]
-            reset_mean = cdf_params[1]
-            reset_std = std_exp(reset_mean)
-            fitted_values = single_cdf_nostd(reset_times, *cdf_params)
-            residuals = reset_count - fitted_values
-            sum_residuals = np.sum(np.abs(residuals))
-            sum_residuals_per_reset = sum_residuals/num_resets            
+            cdf_params, _ = curve_fit(single_cdf_nostd, reset_times, reset_count, p0=initial_params, bounds=bounds)
+
+            amp, mean = cdf_params
+            std = std_exp(mean)
             
-            if ((reset_amp > num_resets) and (reset_amp < num_resets + 1) and (sum_residuals_per_reset < 0.1)):
-                singlecdf_event.append(n)
-                singlecdf_pixid.append(df.iloc[i].PixelID)
-                singlecdf_amp.append(reset_amp)
-                singlecdf_mean.append(reset_mean)
-                singlecdf_std.append(reset_std)
-                singlecdf_residual.append(sum_residuals_per_reset)
+            expected_reset_times = inverse_singlecdf_solver(reset_count, amp, mean, std)
+            
+            rmse = np.sqrt(np.mean((reset_times - expected_reset_times) ** 2))
+
+            if rmse < 0.5*clockspeed:
+                singlecdf_event.append(row.event)
+                singlecdf_pixid.append(row.PixelID)
+                singlecdf_amp.append(amp)
+                singlecdf_mean.append(mean)
+                singlecdf_std.append(std)
+                singlecdf_rmse.append(rmse)
+            
+            if plot:
+                # Plotting the reset data and the CDF fit
+                plt.figure(figsize=(10, 8))
+    
+                # Plot the reset data
+                plt.scatter(reset_times, reset_count, label='Reset Data', color='blue', alpha=0.5)
+
+                # Create a smooth curve for the CDF fit
+                x_fit = np.linspace(min(reset_times), max(reset_times), 100)
+                y_fit = single_cdf(x_fit, *cdf_params)
+
+                # Plot the CDF fit
+                plt.plot(x_fit, y_fit, label=('CDF Fit:' '\n' + r'$\mu = {:.4e} sec$' '\n' + r'$\sigma = {:.4e} sec$').format(mean, std), color='red')
+                plt.ticklabel_format(axis='x', style='sci', scilimits=(0, 0))
+                plt.xticks(np.linspace(min(x_fit), max(x_fit), 5))
+                plt.xlabel('Reset Time [sec]', fontsize=16)
+                plt.ylabel('Cumulative Resets', fontsize=16)
+                plt.title(f'Single-CDF Fit for Pixel {pixelid}, Event {event}', fontsize=16)
+                plt.legend(fontsize=14)
+                plt.xticks(fontsize=14)
+                plt.yticks(fontsize=14)
+                plt.grid()
+                plt.show()               
             
         except RuntimeError:
             continue
-            
+
     data = {
-    'event': singlecdf_event,
-    'PixelID': singlecdf_pixid,
-    'Amp': singlecdf_amp,
-    'Mean': singlecdf_mean,
-    'StD': singlecdf_std,
-    'Avg_Residual': singlecdf_residual,
+        'event': singlecdf_event,
+        'PixelID': singlecdf_pixid,
+        'Amp': singlecdf_amp,
+        'Mean': singlecdf_mean,
+        'StD': singlecdf_std,
+        'rmse': singlecdf_rmse,
     }
 
     return pd.DataFrame(data)
 
-def process_doublehit(df, t0):
+def process_doublehit(df, t0, plot=False):
     doublecdf_event = []
     doublecdf_pixid = []
-    doublecdf_amp_1 = []
-    doublecdf_mean_1 = []
-    doublecdf_std_1 = []
-    doublecdf_amp_2 = []
-    doublecdf_mean_2 = []
-    doublecdf_std_2 = []
-    doublecdf_residual = []
+    doublecdf_amp1 = []
+    doublecdf_mean1 = []
+    doublecdf_std1 = []
+    doublecdf_amp2 = []
+    doublecdf_mean2 = []
+    doublecdf_std2 = []
+    doublecdf_rmse = []
     
-    for i in range(len(df)):
-        reset_times = np.array(df['reset_time'].reset_index().iloc[i][1]) - t0
-        num_resets = len(reset_times)
-        reset_count = np.arange(1, num_resets + 1)  
-        
-        initial_params = [num_resets/2 + 0.1, np.mean(reset_times) - std_exp(np.mean(reset_times)), num_resets/2 + 0.1, np.mean(reset_times) + std_exp(np.mean(reset_times))]
-        
-        try:
-            cdf_params, cdf_covariance = curve_fit(double_cdf_nostd, reset_times, reset_count, p0=initial_params)
-            reset_amp_1 = cdf_params[0]
-            reset_mean_1 = cdf_params[1]
-            reset_std_1 = std_exp(reset_mean_1) 
-            reset_amp_2 = cdf_params[2]
-            reset_mean_2 = cdf_params[3]
-            reset_std_2 = std_exp(reset_mean_2)
-            fitted_values = double_cdf_nostd(reset_times, *cdf_params)
-            residuals = reset_count - fitted_values
-            sum_residuals = np.sum(np.abs(residuals))
-            sum_residuals_per_reset = sum_residuals/num_resets                       
+    iterator = tqdm(range(len(df)), desc="Fitting CDFs")
 
-            if (((reset_amp_1 + reset_amp_2) > num_resets) and ((reset_amp_1 + reset_amp_2) < num_resets + 1) and (sum_residuals_per_reset < 0.1)):
-                doublecdf_event.append(n)
-                doublecdf_pixid.append(df.iloc[i].PixelID)
+    for i in iterator:
+        row = df.iloc[i]
+        reset_times = np.asarray(row.reset_time) - t0
+        num_resets = len(reset_times)
+        event = row.event
+        pixelid = row.PixelID
+        reset_count = np.arange(1, num_resets + 1)
+        initial_params = [num_resets/2, np.median(reset_times) - std_exp(np.median(reset_times)), num_resets/2, np.median(reset_times) + std_exp(np.median(reset_times))]
+        bounds = [(0.1, 0, 0.1, 0), (np.inf, np.inf, np.inf, np.inf)]
+        try:
+            cdf_params, _ = curve_fit(double_cdf_nostd, reset_times, reset_count, p0=initial_params, bounds=bounds)
+            amp1, mean1, amp2, mean2 = cdf_params
+            std1 = std_exp(mean1)
+            std2 = std_exp(mean2) 
+            
+            expected_reset_times = inverse_doublecdf_solver(reset_count, amp1, mean1, std1, amp2, mean2, std2)
+            
+            rmse = np.sqrt(np.mean((reset_times - expected_reset_times) ** 2))
+ 
+            if rmse < 0.5*clockspeed:
+                doublecdf_event.append(row.event)
+                doublecdf_pixid.append(row.PixelID)
+                doublecdf_amp1.append(amp1)
+                doublecdf_mean1.append(mean1)
+                doublecdf_std1.append(std1)
+                doublecdf_amp2.append(amp2)
+                doublecdf_mean2.append(mean2)
+                doublecdf_std2.append(std2)
+                doublecdf_rmse.append(rmse)
+            
+            if plot:
+                # Plotting the reset data and the CDF fit
+                plt.figure(figsize=(10, 8))
+    
+                # Plot the reset data
+                plt.scatter(reset_times, reset_count, label='Reset Data', color='blue', alpha=0.5)
+
+                # Create a smooth curve for the CDF fit
+                x_fit = np.linspace(min(reset_times), max(reset_times), 100)
+                y_fit = double_cdf(x_fit, amp1, mean1, std1, amp2, mean2, std2)
+                y1_fit = single_cdf(x_fit, amp1, mean1, std1)
+                y2_fit = single_cdf(x_fit, amp2, mean2, std2)
                 
-                doublecdf_amp_1.append(reset_amp_1)
-                doublecdf_mean_1.append(reset_mean_1)
-                doublecdf_std_1.append(reset_std_1)
-                doublecdf_amp_2.append(reset_amp_2)
-                doublecdf_mean_2.append(reset_mean_2)
-                doublecdf_std_2.append(reset_std_2)
-                doublecdf_residual.append(sum_residuals_per_reset)
-                
+                # Plot the CDF fit
+                plt.plot(x_fit, y_fit, label=('Double-CDF Fit:'), color='red')
+                plt.plot(x_fit, y1_fit, color='orange', alpha=0.3, label=( r'$\mu_1 = {:.4e} sec$' '\n' + r'$\sigma_1 = {:.4e} sec$').format(mean1, std1))
+                plt.plot(x_fit, y2_fit, color='darkorange', alpha=0.6, label=( r'$\mu_2 = {:.4e} sec$' '\n' + r'$\sigma_2 = {:.4e} sec$').format(mean2, std2))                
+                plt.ticklabel_format(axis='x', style='sci', scilimits=(0, 0))
+                plt.xticks(np.linspace(min(x_fit), max(x_fit), 5))
+                plt.xlabel('Reset Time [sec]', fontsize=16)
+                plt.ylabel('Cumulative Resets', fontsize=16)
+                plt.title(f'Double-CDF Fit for Pixel {pixelid}, Event {event}', fontsize=16)
+                plt.legend(fontsize=14)
+                plt.xticks(fontsize=14)
+                plt.yticks(fontsize=14)
+                plt.grid()
+                plt.show()               
+            
         except RuntimeError:
             continue
-            
+
     data = {
-    'event': doublecdf_event,
-    'PixelID': doublecdf_pixid,
-    'Amp1': doublecdf_amp_1,
-    'Mean1': doublecdf_mean_1,
-    'StD1': doublecdf_std_1,
-    'Amp2': doublecdf_amp_2,
-    'Mean2': doublecdf_mean_2,
-    'StD2': doublecdf_std_2,
-    'Avg_Residual': doublecdf_residual,
+        'event': doublecdf_event,
+        'PixelID': doublecdf_pixid,
+        'Amp1': doublecdf_amp1,
+        'Mean1': doublecdf_mean1,
+        'StD1': doublecdf_std1,
+        'Amp2': doublecdf_amp2,
+        'Mean2': doublecdf_mean2,
+        'StD2': doublecdf_std2,
+        'rmse': doublecdf_rmse,
     }
 
     return pd.DataFrame(data)
 
-def process_triplehit(df, t0):
+def process_triplehit(df, t0, plot=False):
     triplecdf_event = []
     triplecdf_pixid = []
-    triplecdf_amp_1 = []
-    triplecdf_mean_1 = []
-    triplecdf_std_1 = []
-    triplecdf_amp_2 = []
-    triplecdf_mean_2 = []
-    triplecdf_std_2 = []
-    triplecdf_amp_3 = []
-    triplecdf_mean_3 = []
-    triplecdf_std_3 = []
-    triplecdf_residual = []
-        
-    for i in range(len(df)):
-        reset_times = np.array(df['reset_time'].reset_index().iloc[i][1]) - t0
+    triplecdf_amp1 = []
+    triplecdf_mean1 = []
+    triplecdf_std1 = []
+    triplecdf_amp2 = []
+    triplecdf_mean2 = []
+    triplecdf_std2 = []
+    triplecdf_amp3 = []
+    triplecdf_mean3 = []
+    triplecdf_std3 = []
+    triplecdf_rmse = []
+    
+    iterator = tqdm(range(len(df)), desc="Fitting CDFs")
+
+    for i in iterator:
+        row = df.iloc[i]
+        reset_times = np.asarray(row.reset_time) - t0
         num_resets = len(reset_times)
-        reset_count = np.arange(1, num_resets + 1)  
-        
-        initial_params = [num_resets/3 + 0.1, np.mean(reset_times) - std_exp(np.mean(reset_times)), num_resets/3 + 0.1, np.mean(reset_times) + std_exp(np.mean(reset_times)), num_resets/3 + 0.1, np.mean(reset_times)]
-        
+        event = row.event
+        pixelid = row.PixelID
+        reset_count = np.arange(1, num_resets + 1)
+        initial_params = [num_resets/3, np.median(reset_times) - 2*std_exp(np.median(reset_times)), num_resets/3, np.median(reset_times) + 2*std_exp(np.median(reset_times)), num_resets/3, np.median(reset_times)]
+        bounds = [(0.1, 0, 0.1, 0, 0.1, 0), (np.inf, np.inf, np.inf, np.inf, np.inf, np.inf)]
         try:
-            cdf_params, cdf_covariance = curve_fit(triple_cdf_nostd, reset_times, reset_count, p0=initial_params)
-            reset_amp_1 = cdf_params[0]
-            reset_mean_1 = cdf_params[1]
-            reset_std_1 = std_exp(reset_mean_1)
-            reset_diff_1 = std_difference(reset_mean_1, reset_std_1)    
-            reset_amp_2 = cdf_params[2]
-            reset_mean_2 = cdf_params[3]
-            reset_std_2 = std_exp(reset_mean_2)
-            reset_diff_2 = std_difference(reset_mean_2, reset_std_2)
-            reset_amp_3 = cdf_params[4]
-            reset_mean_3 = cdf_params[5]
-            reset_std_3 = std_exp(reset_mean_3)
-            reset_diff_3 = std_difference(reset_mean_3, reset_std_3)
-            fitted_values = triple_cdf_nostd(reset_times, *cdf_params)
-            residuals = reset_count - fitted_values
-            sum_residuals = np.sum(np.abs(residuals))
-            sum_residuals_per_reset = sum_residuals/num_resets     
+            cdf_params, _ = curve_fit(triple_cdf_nostd, reset_times, reset_count, p0=initial_params, bounds=bounds)
+            amp1, mean1, amp2, mean2, amp3, mean3 = cdf_params
+            std1 = std_exp(mean1)
+            std2 = std_exp(mean2)
+            std3 = std_exp(mean3)
             
-            if (((reset_amp_1 + reset_amp_2 + reset_amp_3) > num_resets) and ((reset_amp_1 + reset_amp_2 + reset_amp_3) < num_resets + 1) and (sum_residuals_per_reset < 0.1)):
-                triplecdf_event.append(n)
-                triplecdf_pixid.append(df.iloc[i].PixelID)
+            expected_reset_times = inverse_triplecdf_solver(reset_count, amp1, mean1, std1, amp2, mean2, std2, amp3, mean3, std3)
+            
+            rmse = np.sqrt(np.mean((reset_times - expected_reset_times) ** 2))
+
+            if rmse < 0.5*clockspeed:
+                triplecdf_event.append(row.event)
+                triplecdf_pixid.append(row.PixelID)
+                triplecdf_amp1.append(amp1)
+                triplecdf_mean1.append(mean1)
+                triplecdf_std1.append(std1)
+                triplecdf_amp2.append(amp2)
+                triplecdf_mean2.append(mean2)
+                triplecdf_std2.append(std2)
+                triplecdf_amp3.append(amp3)
+                triplecdf_mean3.append(mean3)
+                triplecdf_std3.append(std3)
+                triplecdf_rmse.append(rmse)
+            
+            if plot:
+                # Plotting the reset data and the CDF fit
+                plt.figure(figsize=(10, 8))
+    
+                # Plot the reset data
+                plt.scatter(reset_times, reset_count, label='Reset Data', color='blue', alpha=0.5)
+
+                # Create a smooth curve for the CDF fit
+                x_fit = np.linspace(min(reset_times), max(reset_times), 100)
+                y_fit = triple_cdf(x_fit, amp1, mean1, std1, amp2, mean2, std2, amp3, mean3, std3)
+                y1_fit = single_cdf(x_fit, amp1, mean1, std1)
+                y2_fit = single_cdf(x_fit, amp2, mean2, std2)
+                y3_fit = single_cdf(x_fit, amp3, mean3, std3)
                 
-                triplecdf_amp_1.append(reset_amp_1)
-                triplecdf_mean_1.append(reset_mean_1)
-                triplecdf_std_1.append(reset_std_1)
-                triplecdf_amp_2.append(reset_amp_2)
-                triplecdf_mean_2.append(reset_mean_2)
-                triplecdf_std_2.append(reset_std_2)
-                triplecdf_amp_3.append(reset_amp_3)
-                triplecdf_mean_3.append(reset_mean_3)
-                triplecdf_std_3.append(reset_std_3)
-                triplecdf_residual.append(sum_residuals_per_reset)
-                
+                # Plot the CDF fit
+                plt.plot(x_fit, y_fit, label=('Triple-CDF Fit:'), color='red')
+                plt.plot(x_fit, y1_fit, color='orange', alpha=0.3, label=( r'$\mu_1 = {:.4e} sec$' '\n' + r'$\sigma_1 = {:.4e} sec$').format(mean1, std1))
+                plt.plot(x_fit, y2_fit, color='darkorange', alpha=0.6, label=( r'$\mu_2 = {:.4e} sec$' '\n' + r'$\sigma_2 = {:.4e} sec$').format(mean2, std2))                
+                plt.plot(x_fit, y3_fit, color='brown', alpha=0.6, label=( r'$\mu_3 = {:.4e} sec$' '\n' + r'$\sigma_3 = {:.4e} sec$').format(mean3, std3))                
+
+                plt.ticklabel_format(axis='x', style='sci', scilimits=(0, 0))
+                plt.xticks(np.linspace(min(x_fit), max(x_fit), 5))
+                plt.xlabel('Reset Time [sec]', fontsize=16)
+                plt.ylabel('Cumulative Resets', fontsize=16)
+                plt.title(f'triple-CDF Fit for Pixel {pixelid}, Event {event}', fontsize=16)
+                plt.legend(fontsize=14)
+                plt.xticks(fontsize=14)
+                plt.yticks(fontsize=14)
+                plt.grid()
+                plt.show()               
+            
         except RuntimeError:
             continue
-            
+
     data = {
-    'event': triplecdf_event,
-    'PixelID': triplecdf_pixid,
-    'Amp1': triplecdf_amp_1,
-    'Mean1': triplecdf_mean_1,
-    'StD1': triplecdf_std_1,
-    'Amp2': triplecdf_amp_2,
-    'Mean2': triplecdf_mean_2,
-    'StD2': triplecdf_std_2,
-    'Amp3': triplecdf_amp_3,
-    'Mean3': triplecdf_mean_3,
-    'StD3': triplecdf_std_3,
-    'Avg_Residual': triplecdf_residual,
+        'event': triplecdf_event,
+        'PixelID': triplecdf_pixid,
+        'Amp1': triplecdf_amp1,
+        'Mean1': triplecdf_mean1,
+        'StD1': triplecdf_std1,
+        'Amp2': triplecdf_amp2,
+        'Mean2': triplecdf_mean2,
+        'StD2': triplecdf_std2,
+        'Amp3': triplecdf_amp2,
+        'Mean3': triplecdf_mean2,
+        'StD3': triplecdf_std2,        
+        'rmse': triplecdf_rmse,
     }
 
     return pd.DataFrame(data)
@@ -304,7 +474,7 @@ doublehit_df = pd.DataFrame()
 triplehit_df = pd.DataFrame()
 unfitpix_df = pd.DataFrame()
 
-##########################
+
 for n in range(total_events):
     print("//////////////////////////")
     print("Event =", n)
@@ -329,7 +499,7 @@ for n in range(total_events):
         print("Skipping Event, no well-measured pixels")
         continue
         
-    hist, bin_edges = np.histogram(singlecdf_diff_cut, bins=10)
+    hist, bin_edges = np.histogram(singlecdf_diff_cut, bins=12)
     bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
     
     p0 = [max(hist), np.median(bin_centers), np.std(bin_centers)]
@@ -359,7 +529,7 @@ for n in range(total_events):
     t0_event = singlecdf_noshift_results[(singlecdf_diff > diff_low) & (singlecdf_diff < diff_high)]
     
     if len(t0_event) < 2:
-        print("Not enough well-meausred pixels for t0 evaluation")
+        print("Not enough well-measured pixels for t0 evaluation")
         continue
 
     t0_df = t0_df.append(t0_event, ignore_index=True)
@@ -397,19 +567,9 @@ for n in range(total_events):
 
     #Create a singlehit dataframe for the pixels that fit well to a single hit  
     singlehit_event = process_singlehit(rtd_allpix_eventdf, optimal_t0_shift)
-    
+    print("single hit pixels in event = ", len(singlehit_event)) 
+      
     if not singlehit_event.empty:
-        
-        if not singlehit_event[singlehit_event.Amp >= 3].empty:
-            singlehit_percentile_high = np.percentile(singlehit_event[singlehit_event.Amp >= 3]['Avg_Residual'], 85)   
-        else:
-            singlehit_percentile_high = 0.1
-            
-        singlehit_cut = np.median(singlehit_event[(singlehit_event.Avg_Residual <= singlehit_percentile_high)]['Avg_Residual']) + 5*np.std(singlehit_event[(singlehit_event.Avg_Residual <= singlehit_percentile_high)]['Avg_Residual'], ddof=1)
-    
-        singlehit_event = singlehit_event[singlehit_event.Avg_Residual < singlehit_cut]   
-    
-        print("single hit pixels in event = ", len(singlehit_event))
     
         singlehit_event['t0'] = optimal_t0_shift
         singlehit_df = singlehit_df.append(singlehit_event, ignore_index=True)
@@ -429,18 +589,9 @@ for n in range(total_events):
     
     #Create a doublehit dataframe for the pixels that fit well to a double hit
     doublehit_event = process_doublehit(notsinglehit_event[notsinglehit_event.nResets >= 4], optimal_t0_shift)
+    print("double hit pixels in event = ", len(doublehit_event))
     
     if not doublehit_event.empty:
-        if not doublehit_event[(doublehit_event.Amp1 + doublehit_event.Amp2) >= 5].empty:
-            doublehit_percentile_high = np.percentile(doublehit_event[(doublehit_event.Amp1 + doublehit_event.Amp2) >= 5]['Avg_Residual'], 85)      
-        else:
-            doublehit_percentile_high = 0.1
-
-        doublehit_cut = np.median(doublehit_event[(doublehit_event.Avg_Residual <= doublehit_percentile_high)]['Avg_Residual']) + 5*np.std(doublehit_event[(doublehit_event.Avg_Residual <= doublehit_percentile_high)]['Avg_Residual'], ddof=1)
-    
-        doublehit_event = doublehit_event[doublehit_event.Avg_Residual < doublehit_cut]   
-    
-        print("double hit pixels in event = ", len(doublehit_event))
 
         doublehit_event['t0'] = optimal_t0_shift
         doublehit_df = doublehit_df.append(doublehit_event, ignore_index=True)
@@ -460,18 +611,9 @@ for n in range(total_events):
         
     #Create a triplehit dataframe for the pixels that fit well to a triple hit
     triplehit_event = process_triplehit(notdoublehit_event[notdoublehit_event.nResets >= 6], optimal_t0_shift)
-    
+    print("triple hit pixels in event = ", len(triplehit_event))  
+     
     if not triplehit_event.empty:
-        if not triplehit_event[(triplehit_event.Amp1 + triplehit_event.Amp2 + triplehit_event.Amp3) >= 7].empty:
-            triplehit_percentile_high = np.percentile(triplehit_event[(triplehit_event.Amp1 + triplehit_event.Amp2 + triplehit_event.Amp3) >= 7]['Avg_Residual'], 85)   
-        else:
-            triplehit_percentile_high = 0.1
-            
-        triplehit_cut = np.median(triplehit_event[(triplehit_event.Avg_Residual <= triplehit_percentile_high)]['Avg_Residual']) + 5*np.std(triplehit_event[(triplehit_event.Avg_Residual <= triplehit_percentile_high)]['Avg_Residual'], ddof=1)
-    
-        triplehit_event = triplehit_event[triplehit_event.Avg_Residual < triplehit_cut]  
-    
-        print("triple hit pixels in event = ", len(triplehit_event))
     
         triplehit_event['t0'] = optimal_t0_shift
         triplehit_df = triplehit_df.append(triplehit_event, ignore_index=True)
