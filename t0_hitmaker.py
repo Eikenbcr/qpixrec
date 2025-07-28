@@ -209,11 +209,15 @@ def process_singlehit(df, t0, plot=False):
     for i in iterator:
         row = df.iloc[i]
         reset_times = np.asarray(row.reset_time) - t0
+        if np.median(reset_times) < 0:
+            continue
+        
         num_resets = len(reset_times)
         event = row.event
         pixelid = row.PixelID
         reset_count = np.arange(1, num_resets + 1)
         initial_params = [num_resets + 0.1, np.median(reset_times)]
+        
         bounds = [(num_resets, 0), (np.inf, np.inf)]
         try:
             cdf_params, _ = curve_fit(single_cdf_nostd, reset_times, reset_count, p0=initial_params, bounds=bounds)
@@ -287,6 +291,9 @@ def process_doublehit(df, t0, plot=False):
     for i in iterator:
         row = df.iloc[i]
         reset_times = np.asarray(row.reset_time) - t0
+        if np.median(reset_times) < 0:
+            continue
+        
         num_resets = len(reset_times)
         event = row.event
         pixelid = row.PixelID
@@ -378,6 +385,9 @@ def process_triplehit(df, t0, plot=False):
     for i in iterator:
         row = df.iloc[i]
         reset_times = np.asarray(row.reset_time) - t0
+        if np.median(reset_times) < 0:
+            continue
+        
         num_resets = len(reset_times)
         event = row.event
         pixelid = row.PixelID
