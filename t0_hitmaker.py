@@ -462,9 +462,9 @@ def process_triplehit(df, t0, plot=False):
         'Amp2': triplecdf_amp2,
         'Mean2': triplecdf_mean2,
         'StD2': triplecdf_std2,
-        'Amp3': triplecdf_amp2,
-        'Mean3': triplecdf_mean2,
-        'StD3': triplecdf_std2,        
+        'Amp3': triplecdf_amp3,
+        'Mean3': triplecdf_mean3,
+        'StD3': triplecdf_std3,        
         'rmse': triplecdf_rmse,
     }
 
