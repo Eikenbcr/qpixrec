@@ -146,7 +146,7 @@ def process_singlecdf(df, plot=False):
             expected_reset_times = inverse_singlecdf_solver(reset_count, amp, mean, std)
             
             rmse = np.sqrt(np.mean((reset_times - expected_reset_times) ** 2))
-            if rmse < 0.1*clockspeed:
+            if rmse < 0.5*clockspeed:
                 singlecdf_event.append(row.event)
                 singlecdf_pixid.append(row.PixelID)
                 singlecdf_amp.append(amp)
@@ -229,7 +229,7 @@ def process_singlehit(df, t0, plot=False):
             
             rmse = np.sqrt(np.mean((reset_times - expected_reset_times) ** 2))
 
-            if rmse < 0.5*clockspeed:
+            if rmse < clockspeed:
                 singlecdf_event.append(row.event)
                 singlecdf_pixid.append(row.PixelID)
                 singlecdf_amp.append(amp)
@@ -310,7 +310,7 @@ def process_doublehit(df, t0, plot=False):
             
             rmse = np.sqrt(np.mean((reset_times - expected_reset_times) ** 2))
  
-            if rmse < 0.5*clockspeed:
+            if rmse < clockspeed:
                 doublecdf_event.append(row.event)
                 doublecdf_pixid.append(row.PixelID)
                 doublecdf_amp1.append(amp1)
@@ -405,7 +405,7 @@ def process_triplehit(df, t0, plot=False):
             
             rmse = np.sqrt(np.mean((reset_times - expected_reset_times) ** 2))
 
-            if rmse < 0.5*clockspeed:
+            if rmse < clockspeed:
                 triplecdf_event.append(row.event)
                 triplecdf_pixid.append(row.PixelID)
                 triplecdf_amp1.append(amp1)
