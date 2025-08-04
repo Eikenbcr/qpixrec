@@ -34,6 +34,11 @@ reset_min = int(sys.argv[4])
 reset_max = int(sys.argv[5])
 clockspeed = float(sys.argv[6])
 
+print("minimum reset = ", reset_min)
+print("maximum reset = ", reset_max)
+print("reset threshold = ", reset_threshold)
+print("clockspeed = ", clockspeed)
+
 # Constants
 diff_L = 6.8223 #cm**2/s
 elec_vel = 164800 #cm**2/s
