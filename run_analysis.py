@@ -30,6 +30,7 @@ def main():
     parser.add_argument("-threshold", type=int, default=6250, help="Electron threshold for QPix reset (default: 6250).")
     parser.add_argument("-rmin", type=int, default=3, help="Minimum resets for t0 evaluation (default: 3).")
     parser.add_argument("-rmax", type=int, default=5, help="Maximum resets for t0 evaluation (default: 5).")
+    parser.add_argument("-clockspeed", type=str, default="1e-8", help="Clock speed in sec (default: 1e-8).")
     
     # Parse arguments
     args = parser.parse_args()
@@ -39,7 +40,8 @@ def main():
     reset_threshold = args.threshold
     rmin = args.rmin
     rmax = args.rmax
-
+    clockspeed = args.clockspeed
+    
     # Define output directories
     file_path = os.path.dirname(root_file) + "/"
     dfoutput_dir = file_path + "rtd_dataframe/"
@@ -56,7 +58,7 @@ def main():
     # List of scripts to run
     scripts_to_run = [
         (run_path + "/root_to_pandas.py", root_file, dfoutput_dir),
-        (run_path + "/t0_hitmaker.py", dfoutput_dir, t0_hitmaker_dir, str(reset_threshold), str(rmin), str(rmax))
+        (run_path + "/t0_hitmaker.py", dfoutput_dir, t0_hitmaker_dir, str(reset_threshold), str(rmin), str(rmax), str(clockspeed)),
     ]
 
     # Execute each script
