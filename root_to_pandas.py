@@ -5,7 +5,7 @@
 #
 # Constructs pandas DataFrames from a ROOT file (qpixrtd output)
 # * Author: Carter Eikenbary
-# * Creation date: 2 December 2024
+# * Creation date: 3 September 2026
 #
 # Usage: python /path/to/root_to_pandas.py /path/to/file.root  /path/to/dataframe/output/
 # Notes: HPRC users must load foss/2022b and source qpix-setup before running this script
@@ -25,12 +25,25 @@ file = uproot.open(input_path + ':' + root_tree)
 
 ##########################
 # Loading Geant4 data into dataframe
+generator_df = file.arrays(["generator_final_number_particles", "generator_final_particle_x", "generator_final_particle_y", "generator_final_particle_z", "generator_final_particle_t", 
+                            "generator_final_particle_px", "generator_final_particle_py", "generator_final_particle_pz", "generator_final_particle_energy", "generator_final_particle_pdg_code"], library="pd")
+generator_df.rename(columns={"generator_final_number_particles": "nParticles", "generator_final_particle_x": "xi", 
+"generator_final_particle_y": "yi", "generator_final_particle_z": "zi", "generator_final_particle_t": "ti",
+"generator_final_particle_px": "pxi", "generator_final_particle_py": "pyi", "generator_final_particle_pz": "pzi",
+"generator_final_particle_energy": "Ei", "generator_final_particle_pdg_code": "PDG"}, inplace=True)
+generator_df.reset_index("entry", inplace=True)
+generator_df.reset_index("subentry", inplace=True)
+generator_df.rename(columns={"entry": "event"}, inplace=True)
+generator_df.drop(columns=["subentry"], inplace=True)
+generator_df.to_pickle(output_path + 'generator_df.pkl')
+print("generator_df built in " + output_path + "generator_df.pkl")
+
 g4_df = file.arrays(["hit_start_x","hit_end_x","hit_start_y","hit_end_y","hit_start_z","hit_end_z","hit_start_t","hit_end_t","hit_energy_deposit", "hit_track_id"], library="pd")
 g4_df.rename(columns={"hit_start_x": "xi", "hit_end_x": "xf"}, inplace=True)
 g4_df.rename(columns={"hit_start_y": "yi", "hit_end_y": "yf"}, inplace=True)
 g4_df.rename(columns={"hit_start_z": "zi", "hit_end_z": "zf"}, inplace=True)
 g4_df.rename(columns={"hit_start_t": "ti", "hit_end_t": "tf"}, inplace=True)
-g4_df.rename(columns={"hit_energy_deposit": "E", "hit_track_id": "ParticleID"}, inplace=True)
+g4_df.rename(columns={"hit_energy_deposit": "E", "hit_track_id": "ParticleID", "hit_process_key": "ProcessKey"}, inplace=True)
 g4_df.reset_index("subentry", inplace=True)
 g4_df.reset_index("entry", inplace=True)
 g4_df.rename(columns={"entry": "event", "subentry": "TrackID"}, inplace=True)
