@@ -43,7 +43,7 @@ rtd_df.reset_index("subentry", inplace=True)
 rtd_df.reset_index("entry", inplace=True)
 rtd_df.rename(columns={"entry": "event", "subentry": "PixelID"}, inplace=True)
 
-resettime_df = file.arrays(["pixel_reset", "pixel_tslr"], library="pd")
+resettime_df = file.arrays(["pixel_reset", "pixel_tslr", "pixel_reset_truth_track_id", "pixel_reset_truth_weight"], library="pd")
 resettime_df.reset_index(drop=False, inplace=True)
 resettime_df.rename(columns={"index": "event"}, inplace=True)
 
@@ -57,18 +57,18 @@ data_list = []
 for i, row in resettime_df.iterrows():
     event = row['event']
     relevant_rows = rtd_df[rtd_df['event'] == event]
-    for j, (pixel_reset, pixel_tslr) in enumerate(zip(row['pixel_reset'], row['pixel_tslr'])):
+    for j, (pixel_reset, pixel_tslr) in enumerate(zip(row['pixel_reset'], row['pixel_tslr'], row['pixel_reset_truth_track_id'], row['pixel_reset_truth_weight'])):
         if j < len(relevant_rows):
             pixel_x = relevant_rows.iloc[j]['pixel_x']
             pixel_y = relevant_rows.iloc[j]['pixel_y']
 
-            data_list.append({'event': event, 'PixelID': j, 'pixel_x': pixel_x, 'pixel_y': pixel_y, 'reset_time': pixel_reset, 'TSLR': pixel_tslr})
+            data_list.append({'event': event, 'PixelID': j, 'pixel_x': pixel_x, 'pixel_y': pixel_y, 'reset_time': pixel_reset, 'TSLR': pixel_tslr, 'trackIDs': pixel_reset_truth_track_id, 'track_w': pixel_reset_truth_weight})
 
 # Create the DataFrame from the list of dictionaries
 rtd_df = pd.DataFrame(data_list)
 rtd_df["nResets"] = rtd_df['reset_time'].apply(len)
 
-column_order = ['event', 'PixelID', 'pixel_x', 'pixel_y', 'nResets', 'reset_time', 'TSLR']
+column_order = ['event', 'PixelID', 'pixel_x', 'pixel_y', 'nResets', 'reset_time', 'TSLR', 'trackIDs', 'track_w',]
 rtd_df = rtd_df[column_order]
 rtd_df = rtd_df.reset_index(drop = True)
 rtd_df.to_pickle(output_path + 'rtd_df.pkl')
